@@ -1,5 +1,4 @@
-PROGRAM: GLuint = 0;
-VBO, VAO, EBO: GLuint = 0;
+MAX_INSTANCES :: 1024;
 
 VERTICES :: Vertex.[
 	.{.{0.5, 0.5, 0.0}, .{1.0, 1.0}}, // top right
@@ -13,10 +12,26 @@ INDICES :: u32.[
 	1, 2, 3,
 ];
 
+PROGRAM: GLuint = 0;
+VBO, VAO, EBO : GLuint = 0;
+
+PROGRAM_INSTANCED: GLuint = 0;
+VAO_INSTANCED, VBO_INSTANCED : GLuint = 0;
+
+
 Vertex :: struct {
 	position: Vector3;
-	// color: Vector4;
 	uv: Vector2;
+}
+
+check_gl_error :: () {
+    error := glGetError();
+    while (error != GL_NO_ERROR) {
+        print("OpenGL Error: %\n", error);
+
+        // Check for more errors
+        error = glGetError();
+    }
 }
 
 create_shader_program :: (vertex_source: string, fragment_source: string) -> GLuint, bool {
@@ -93,8 +108,10 @@ create_shader_program :: (vertex_source: string, fragment_source: string) -> GLu
 
 init_render :: () -> bool {
 	ok: bool;
-	PROGRAM, ok = create_shader_program(VERTEX_SHADER, FRAGMENT_SHADER);
 
+	// NORMAL
+
+	PROGRAM, ok = create_shader_program(VERTEX_SHADER, FRAGMENT_SHADER);
 	if !ok return false;
 
 	glGenVertexArrays(1, *VAO);
@@ -112,11 +129,45 @@ init_render :: () -> bool {
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, size_of(Vertex), null);
     glEnableVertexAttribArray(0);
 
-	// glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, size_of(Vertex), cast(*void)(3 * size_of(float)));
-    // glEnableVertexAttribArray(1);
-
 	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, size_of(Vertex), cast(*void)(3 * size_of(float)));
     glEnableVertexAttribArray(1);
+
+	glBindVertexArray(0);
+
+	// INSTANCED 
+
+	PROGRAM_INSTANCED, ok = create_shader_program(VERTEX_SHADER_INSTANCED, FRAGMENT_SHADER);
+	if !ok return false;
+
+	glGenVertexArrays(1, *VAO_INSTANCED);
+
+	glBindVertexArray(VAO_INSTANCED);
+
+	glBindBuffer(GL_ARRAY_BUFFER, VBO);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+
+	glGenBuffers(1, *VBO_INSTANCED);
+
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, size_of(Vertex), null);
+	glEnableVertexAttribArray(0);
+
+	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, size_of(Vertex), cast(*void)(3 * size_of(float)));
+	glEnableVertexAttribArray(1);
+	
+	// Bind and set instance buffer data (empty for now, you will update this every frame or whenever instance data changes)
+	glBindBuffer(GL_ARRAY_BUFFER, VBO_INSTANCED);
+	glBufferData(GL_ARRAY_BUFFER, size_of(Matrix4) * MAX_INSTANCES, null, GL_DYNAMIC_DRAW);  // Reserve space for MAX_INSTANCES
+
+// Instance attribute pointers (assuming Matrix4 is made up of 4 Vector4's)
+for i: 0..3 {
+	glVertexAttribPointer(xx (2 + i), 4, GL_FLOAT, GL_FALSE, size_of(Vector4), cast(*void) (5 * size_of(float) + i * size_of(Vector4)));
+	glEnableVertexAttribArray(xx (2 + i));
+	glVertexAttribDivisor(xx (2 + i), 1);  // this makes it instanced
+}
+
+	glBindVertexArray(0);
+
+	// GENERAL STUFF
 
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -136,15 +187,55 @@ draw_texture :: (texture: Texture, position: Vector2, size: Vector2) {
 	transform := Matrix4_Identity;
 	transform = translate(transform, make_vector3(position.x, position.y, 0));
 	transform = scale(transform, make_vector3(size.x, size.y, 0));
-	projection := orthographic_projection_matrix(0, xx window_width, xx window_height, 0, 0, 1);
-
 	transform_loc := glGetUniformLocation(PROGRAM, "transform");
 	glUniformMatrix4fv(transform_loc, 1, GL_TRUE, *transform.coef[0][0]);
 
+	projection := orthographic_projection_matrix(0, xx window_width, xx window_height, 0, 0, 1);
 	proj_loc := glGetUniformLocation(PROGRAM, "projection");
 	glUniformMatrix4fv(proj_loc, 1, GL_TRUE, *projection.coef[0][0]);
 
 	glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, null);
+
+	glBindVertexArray(0);
+}
+
+TRANSFORMS: [..] Matrix4;
+
+draw_textures :: (texture: Texture, positions: [..]Vector2, size: Vector2) {
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, texture);
+	
+	glBindVertexArray(VAO_INSTANCED);
+	
+	glUseProgram(PROGRAM_INSTANCED);
+    glUniform1i(glGetUniformLocation (PROGRAM_INSTANCED, "texture0"), 0);
+
+	projection := orthographic_projection_matrix(0, xx window_width, xx window_height, 0, 0, 1);
+	proj_loc := glGetUniformLocation(PROGRAM_INSTANCED, "projection");
+	glUniformMatrix4fv(proj_loc, 1, GL_TRUE, *projection.coef[0][0]);
+
+	array_reset(*TRANSFORMS);
+
+	for 0..positions.count-1 {
+		position := positions[it];
+
+		transform := Matrix4_Identity;
+		transform = translate(transform, make_vector3(position.x, position.y, 0));
+		transform = scale(transform, make_vector3(size.x, size.y, 0));
+
+		transpose(*transform);
+		array_add(*TRANSFORMS, transform);
+	}
+	
+	glBindBuffer(GL_ARRAY_BUFFER, VBO);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+
+	glBindBuffer(GL_ARRAY_BUFFER, VBO_INSTANCED);
+	glBufferSubData(GL_ARRAY_BUFFER, 16, size_of(Matrix4) * TRANSFORMS.count, xx TRANSFORMS.data);
+	
+	glDrawElementsInstanced(GL_TRIANGLES, 6, GL_UNSIGNED_INT, null, xx TRANSFORMS.count);
+
+	glBindVertexArray(0);
 }
 
 VERTEX_SHADER :: #string GLSL
@@ -160,6 +251,21 @@ uniform mat4 projection;
 void main() {
 	TexCoord = aTexCoord;
 	gl_Position = projection * transform * vec4(aPosition, 1.0);
+}
+GLSL
+
+VERTEX_SHADER_INSTANCED :: #string GLSL
+layout(location = 0) in vec3 aPosition;
+layout(location = 1) in vec2 aTexCoord;
+layout(location = 2) in mat4 aInstanceTransform;
+
+out vec2 TexCoord;
+
+uniform mat4 projection;
+
+void main() {
+	TexCoord = aTexCoord;
+	gl_Position = projection * aInstanceTransform * vec4(aPosition, 1.0);
 }
 GLSL
 

@@ -55,7 +55,7 @@ main :: () {
         return;
     }
 
-    bunnies := 30000;
+    bunnies := 1;
 
     positions: [..]Vector2;
     velocities: [..]Vector2;
@@ -102,13 +102,16 @@ main :: () {
             if position.x < 0 || position.x > xx window_width velocity.x = -velocity.x;
             if position.y < 0 || position.y > xx window_height velocity.y = -velocity.y;
 
-            draw_texture(texture, position, .{32, 32});
-
             positions[it] = position;
             velocities[it] = velocity;
+            
+            // draw_texture(texture, position, .{32, 32});
         }
+        
+        draw_textures(texture, positions, .{32, 32});
+        check_gl_error();
 
-        print("FPS %\n", 1.0 / delta);
+        // print("FPS %\n", 1.0 / delta);
 
         SDL_GL_SwapWindow(window);
     }
