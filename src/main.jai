@@ -55,13 +55,16 @@ main :: () {
         return;
     }
 
-    bunnies := 1;
+    bunnies := MAX_INSTANCES;
 
-    positions: [..]Vector2;
+    transforms: [..]Matrix4;
     velocities: [..]Vector2;
 
     for 1..bunnies {
-        array_add(*positions, .{50, 50});
+        transform := Matrix4_Identity;
+        transform = translate(transform, .{50, 50, 0});
+        transform = scale(transform, .{16, 16, 0});
+        array_add(*transforms, transform);
         array_add(*velocities, .{random_get_within_range(-200, 200), random_get_within_range(-200, 200)});
     }
 
@@ -94,7 +97,8 @@ main :: () {
         glClear(GL_COLOR_BUFFER_BIT);
 
         for 0..bunnies-1 {
-            position := positions[it];
+            transform := transforms[it];
+            position := Vector2.{transform._14, transform._24};
             velocity := velocities[it];
 
             position += velocity * delta;
@@ -102,16 +106,17 @@ main :: () {
             if position.x < 0 || position.x > xx window_width velocity.x = -velocity.x;
             if position.y < 0 || position.y > xx window_height velocity.y = -velocity.y;
 
-            positions[it] = position;
+            transform._14 = position.x;
+            transform._24 = position.y;
+            transforms[it] = transform;
             velocities[it] = velocity;
             
-            // draw_texture(texture, position, .{32, 32});
+            // draw_texture(texture, transform);
         }
         
-        draw_textures(texture, positions, .{32, 32});
-        check_gl_error();
+        draw_textures(texture, transforms);
 
-        // print("FPS %\n", 1.0 / delta);
+        check_gl_error();
 
         SDL_GL_SwapWindow(window);
     }
